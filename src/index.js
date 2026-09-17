@@ -1,10 +1,14 @@
 const { Client, Events, GatewayIntentBits } = require("discord.js");
+const appConfig = require("../apps.json");
 require("dotenv").config();
 
-const SATISFACTORY_APP_ID = 526870;
 const DAILY_CHECK_HOUR_UTC = 6;
-const SATISFACTORY_COMMAND = "/satisfactory";
 const ERROR_MESSAGE = "Error checking the Steam page. Please try again later.";
+const apps = Object.entries(appConfig).map(([name, appId]) => ({
+    appId,
+    displayName: formatAppName(name),
+    command: `/${name.toLowerCase()}`,
+}));
 const token = process.env.DISCORD_TOKEN;
 const channelId = process.env.DISCORD_CHANNEL_ID;
 
@@ -24,9 +28,13 @@ const client = new Client({
     ],
 });
 
-async function getSatisfactoryDiscount() {
+function formatAppName(name) {
+    return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+}
+
+async function getAppDiscount(app) {
     const params = new URLSearchParams({
-        appids: String(SATISFACTORY_APP_ID),
+        appids: String(app.appId),
         filters: "price_overview",
     });
 
@@ -39,47 +47,36 @@ async function getSatisfactoryDiscount() {
     }
 
     const appDetails = await response.json();
-    const details = appDetails[String(SATISFACTORY_APP_ID)];
+    const details = appDetails[String(app.appId)];
 
     if (!details?.success) {
-        throw new Error("Steam API did not return Satisfactory price details");
+        throw new Error(
+            `Steam API did not return ${app.displayName} price details`,
+        );
     }
 
     return details.data?.price_overview ?? null;
 }
 
-function formatSatisfactoryDiscount(priceOverview) {
+function formatAppDiscount(app, priceOverview) {
     if (!priceOverview) {
-        return "I couldn't find current Steam pricing for Satisfactory.";
+        return `I couldn't find current Steam pricing for ${app.displayName}.`;
     }
 
     if (!priceOverview.discount_percent) {
-        return `Satisfactory is not currently reduced on Steam. Current price: ${priceOverview.final_formatted}.`;
+        return `${app.displayName} is not currently reduced on Steam. Current price: ${priceOverview.final_formatted}.`;
     }
 
-    return `Satisfactory is currently reduced by ${priceOverview.discount_percent}% on Steam: ${priceOverview.initial_formatted} -> ${priceOverview.final_formatted}.`;
+    return `${app.displayName} is currently reduced by ${priceOverview.discount_percent}% on Steam: ${priceOverview.initial_formatted} -> ${priceOverview.final_formatted}.`;
 }
 
-async function replyWithSatisfactoryDiscount(message) {
+async function sendAppDiscount(send, app) {
     try {
-        const priceOverview = await getSatisfactoryDiscount();
-        await message.reply(formatSatisfactoryDiscount(priceOverview));
+        const priceOverview = await getAppDiscount(app);
+        await send(formatAppDiscount(app, priceOverview));
     } catch (error) {
         console.error(error);
-        await message.reply(ERROR_MESSAGE);
-    }
-}
-
-async function postDailySatisfactoryDiscount(channel) {
-    try {
-        const priceOverview = await getSatisfactoryDiscount();
-        const discountMessage = formatSatisfactoryDiscount(priceOverview);
-
-        console.log(discountMessage);
-        await channel.send(discountMessage);
-    } catch (error) {
-        console.error(error);
-        console.log(ERROR_MESSAGE);
+        await send(ERROR_MESSAGE);
     }
 }
 
@@ -96,10 +93,13 @@ function getDelayUntilDailyCheck() {
     return nextCheck.getTime() - now.getTime();
 }
 
-function scheduleDailySatisfactoryDiscount(channel) {
+function scheduleDailyAppDiscounts(channel) {
     setTimeout(async () => {
-        await postDailySatisfactoryDiscount(channel);
-        scheduleDailySatisfactoryDiscount(channel);
+        for (const app of apps) {
+            await sendAppDiscount((content) => channel.send(content), app);
+        }
+
+        scheduleDailyAppDiscounts(channel);
     }, getDelayUntilDailyCheck());
 }
 
@@ -112,17 +112,20 @@ client.once(Events.ClientReady, async (readyClient) => {
         throw new Error(`DISCORD_CHANNEL_ID ${channelId} is not a text channel.`);
     }
 
-    scheduleDailySatisfactoryDiscount(channel);
+    scheduleDailyAppDiscounts(channel);
 });
 
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    if (message.content.trim().toLowerCase() === SATISFACTORY_COMMAND) {
+    const command = message.content.trim().toLowerCase();
+    const app = apps.find((steamApp) => steamApp.command === command);
+
+    if (app) {
         console.log(
-            `Command used: ${SATISFACTORY_COMMAND} by ${message.author.tag} in #${message.channel.name}`,
+            `Command used: ${app.command} by ${message.author.tag} in #${message.channel.name}`,
         );
-        await replyWithSatisfactoryDiscount(message);
+        await sendAppDiscount((content) => message.reply(content), app);
     }
 });
 
