@@ -4,14 +4,11 @@ const appConfig = require("../apps.json");
 
 const DAILY_CHECK_HOUR_UTC = 6;
 const ERROR_MESSAGE = "Error checking the Steam page. Please try again later.";
-const token = process.env.DISCORD_TOKEN;
-const channelId = process.env.DISCORD_CHANNEL_ID;
-
-if (!token) {
+if (!process.env.DISCORD_TOKEN) {
     throw new Error("DISCORD_TOKEN is required. Add it to a local .env file.");
 }
 
-if (!channelId) {
+if (!process.env.DISCORD_CHANNEL_ID) {
     throw new Error(
         "DISCORD_CHANNEL_ID is required. Add it to a local .env file.",
     );
@@ -32,18 +29,21 @@ const client = new Client({
 });
 
 async function getAppDiscount(appId) {
-    const response = await fetch(
+    return fetch(
         `https://store.steampowered.com/api/appdetails?${new URLSearchParams({ appids: String(appId), filters: "price_overview" })}`,
-    );
+    )
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error(`Steam API responded with ${response.status}`);
+            }
 
-    if (!response.ok) {
-        throw new Error(`Steam API responded with ${response.status}`);
-    }
-
-    return (
-        (await response.json().appDetails[String(appId)].details.data
-            ?.price_overview) ?? null
-    );
+            return response.json();
+        })
+        .then(
+            (data) =>
+                data.appDetails[String(appId)].details.data?.price_overview ??
+                null,
+        );
 }
 
 function formatAppDiscount(name, priceOverview) {
@@ -68,16 +68,15 @@ async function sendAppDiscount(send, name, appId) {
 }
 
 function getDelayUntilDailyCheck() {
-    const now = new Date();
-    const nextCheck = new Date(now);
+    const nextCheck = new Date();
 
     nextCheck.setUTCHours(DAILY_CHECK_HOUR_UTC, 0, 0, 0);
 
-    if (nextCheck <= now) {
+    if (nextCheck <= new Date()) {
         nextCheck.setUTCDate(nextCheck.getUTCDate() + 1);
     }
 
-    return nextCheck.getTime() - now.getTime();
+    return nextCheck.getTime() - Date.now();
 }
 
 function scheduleDailyAppDiscounts(channel) {
@@ -97,11 +96,13 @@ function scheduleDailyAppDiscounts(channel) {
 client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Logged in as ${readyClient.user.tag}`);
 
-    const channel = await readyClient.channels.fetch(channelId);
+    const channel = await readyClient.channels.fetch(
+        process.env.DISCORD_CHANNEL_ID,
+    );
 
     if (!channel?.isTextBased()) {
         throw new Error(
-            `DISCORD_CHANNEL_ID ${channelId} is not a text channel.`,
+            `DISCORD_CHANNEL_ID ${channel.DISCORD_CHANNEL_ID} is not a text channel.`,
         );
     }
 
@@ -126,4 +127,4 @@ client.on(Events.MessageCreate, async (message) => {
     }
 });
 
-client.login(token);
+client.login(process.env.DISCORD_TOKEN);
