@@ -39,11 +39,15 @@ async function getAppDiscount(appId) {
 
             return response.json();
         })
-        .then(
-            (data) =>
-                data.appDetails[String(appId)].details.data?.price_overview ??
-                null,
-        );
+        .then((data) => {
+            const appDetails = data[String(appId)];
+
+            if (!appDetails?.success || !appDetails.data) {
+                return null;
+            }
+
+            return appDetails.data.price_overview ?? null;
+        });
 }
 
 function formatAppDiscount(name, priceOverview) {
